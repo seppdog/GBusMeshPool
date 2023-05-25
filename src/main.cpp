@@ -11,7 +11,7 @@
 #include "SH1106Wire.h"
 #include "EasyPCF8574.h"
 
-#define FWVERSION "1.1"
+#define FWVERSION "1.37"
 #define MODULNAME "GBusPool"
 #define LogLevel ESP_LOG_NONE
 
@@ -69,8 +69,8 @@ bool AutomaticStartActive;
 uint8_t MaxDisplayPage = 8;
 uint8_t ActualDisplayPage = 1;
 
-uint8_t Minute = 0;
-uint8_t Hour = 0;
+uint32_t Minute = 0;
+uint32_t Hour = 0;
 MeshApp mesh;
 
 // Prototypes
@@ -96,6 +96,14 @@ uint8_t ModulType = 255;
 void setup()
 {
   Serial.begin(115200);
+
+  if (!RelaisCard.startI2C(13, 14))
+  {
+    Serial.println("RelaisCard Not started. Check pin and address.");
+  }
+
+  delay(100);
+
   /**
    * @brief Set the log level for serial port printing.
    */
@@ -297,23 +305,6 @@ void loop()
     UpdateMqtt();
     UpdateDisplay();
   }
-
-  if (Hour == AutomaticStartTime &&
-      Minute == 0 &&
-      AutomaticStartActive &&
-      !FilterpumpAutomaticOn)
-  {
-    if (WaterThermometerValue < (WaterMAxTemperature - 2) &&
-        ValvePositionHeat == 0 &&
-        ValveAutomaticMode)
-    {
-      SetValvePosition(1);
-    }
-
-    SetFilterPumpModeAutomatic(!FilterpumpAutomaticOn);
-    SetSaltSystemModeAutomatic(!SaltSystemAutomaticOn);
-    UpdateDisplay();
-  }
 }
 
 void RootNotActiveWatchdog()
@@ -346,10 +337,10 @@ void meshMessage(String msg, uint8_t SrcMac[6])
   String Command = getValue(msg, ' ', 2);
   uint8_t NumberInt = Number.toInt();
 
-  if (Type == "Output")
-  {
-  }
-  else if (msg.startsWith("I'm Root!"))
+  //String MsgBack = "MQTT Get" + Type + " " + Number + " " + Command + " " + String(WaterMAxTemperature);
+  //mesh.SendMessage(MsgBack);
+
+  if (msg.startsWith("I'm Root!"))
   {
     MDF_LOGI("Gateway hold alive received");
     tasker.cancel(RootNotActiveWatchdog);
@@ -383,12 +374,87 @@ void meshMessage(String msg, uint8_t SrcMac[6])
   }
   else if (Type == "Reboot")
   {
+    String MsgBack = "MQTT Reboot Reboot";
+    mesh.SendMessage(MsgBack);
     ESP.restart();
   }
   else if (Type == "time")
   {
     String ActualTime = getValue(msg, ' ', 1);
     sscanf(ActualTime.c_str(), "%u:%u", &Hour, &Minute);
+
+    String MsgBack = "MQTT time Time=" + String(Hour) + ":" + String(Minute) + "," + String(AutomaticStartTime) + "," + String(AutomaticStartActive) + "," + String(FilterpumpAutomaticOn);
+    mesh.SendMessage(MsgBack);
+
+    if (Hour == AutomaticStartTime &&
+        Minute == 0 &&
+        AutomaticStartActive &&
+        !FilterpumpAutomaticOn)
+    {
+      if (WaterThermometerValue < (WaterMAxTemperature - 2) &&
+          ValvePositionHeat == 0 &&
+          ValveAutomaticMode)
+      {
+        SetValvePosition(1);
+      }
+
+      SetFilterPumpModeAutomatic(!FilterpumpAutomaticOn);
+      SetSaltSystemModeAutomatic(!SaltSystemAutomaticOn);
+      UpdateDisplay();
+      UpdateMqtt();
+    }
+
+  }
+  else if (Type == "output")
+  {
+    String OutputString = getValue(msg, ' ', 1);
+    uint8_t OutputNumber = OutputString.toInt();
+
+    SetOutput(OutputNumber, getValue(msg, ' ', 2).toInt());
+  }
+  else if (Type == "FilterPumpModeAutomatic")
+  {
+    SetFilterPumpModeAutomatic(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "FilterpumpAutomaticOnTime")
+  {
+    SetFilterpumpAutomaticOnTime(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "SaltSystemModeAutomatic")
+  {
+    SetSaltSystemModeAutomatic(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "SaltSystemAutomaticOnTime")
+  {
+    SetSaltSystemAutomaticOnTime(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "AutomaticStartActive")
+  {
+    SetAutomaticStartActive(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "AutomaticStartTime")
+  {
+    SetAutomaticStartTime(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "ValveToHeat")
+  {
+    SetValvePosition(getValue(msg, ' ', 1).toInt());
+  }
+  else if (Type == "WaterMaxTemperature")
+  {
+    WaterMAxTemperature = getValue(msg, ' ', 1).toInt();
+    //String Msg = "MQTT WaterMaxTemperature " + String(WaterMAxTemperature);
+    //mesh.SendMessage(Msg);
+    UpdateMqtt();
+    // client.publish("gimpire/EspPool/WaterMaxTemperature", String(WaterMAxTemperature).c_str());
+  }
+  else if (Type == "ValveAutomaticMode")
+  {
+    ValveAutomaticMode = getValue(msg, ' ', 1).toInt();
+    //String Msg = "MQTT ValveAutomaticMode " + String(ValveAutomaticMode);
+    //mesh.SendMessage(Msg);
+    UpdateMqtt();
+    // client.publish("gimpire/EspPool/ValveAutomaticMode", String(ValveAutomaticMode).c_str());
   }
 }
 void HandleDisplaypower(int DisplayOn)
@@ -425,7 +491,6 @@ void TempSensorStartConversion()
 }
 void UpdateMqtt()
 {
-
   StaticJsonDocument<1000> PoolJson;
 
   if (WaterThermometerValue > -127)
@@ -441,16 +506,16 @@ void UpdateMqtt()
   PoolJson["AutomaticStartActive"] = String(AutomaticStartActive);
   PoolJson["SaltSystemModeAutomatic"] = String(SaltSystemAutomaticOn);
   PoolJson["SaltSystemAutomaticOnTime"] = String(SaltSystemAutomaticOnTime);
-  PoolJson["FilterpumpAutomaticOnTime"] = String(FilterpumpAutomaticOnTime);
   PoolJson["ValveToHeat"] = String(ValvePositionHeat);
   PoolJson["FilterPumpModeAutomatic"] = String(FilterpumpAutomaticOn);
+  PoolJson["AutomaticStartTime"] = String(AutomaticStartTime);
+  PoolJson["FilterpumpAutomaticOnTime"] = String(FilterpumpAutomaticOnTime);
 
   String PoolJsonString;
   serializeJson(PoolJson, PoolJsonString);
   String Msg = "MQTT values " + PoolJsonString;
   mesh.SendMessage(Msg);
 }
-
 void UpdateDisplay()
 {
   if (DisplayIsOn)
@@ -614,9 +679,9 @@ void SetOutput(uint8_t Output, bool Value)
   Serial.println("SetOutput: " + String(Output) + " " + String(Value));
 
   RelaisCard.WriteBit(!Value, Output - 1);
- // String PublishString = "gimpire/EspPool/output/" + String(Output);
+  // String PublishString = "gimpire/EspPool/output/" + String(Output);
 
-  String Msg = "MQTT output/" + String(Output) + " " + String(FilterpumpAutomaticOn).c_str();
+  String Msg = "MQTT output/" + String(Output) + " " + String(Value).c_str();
   mesh.SendMessage(Msg);
 
   // client.publish(PublishString.c_str(), String(Value).c_str());
@@ -641,18 +706,21 @@ void SetFilterPumpModeAutomatic(int Mode)
     }
   }
 
-  String Msg = "MQTT FilterPumpModeAutomatic " + String(FilterpumpAutomaticOn);
-  mesh.SendMessage(Msg);
+  UpdateMqtt();
+  //String Msg = "MQTT FilterPumpModeAutomatic " + String(FilterpumpAutomaticOn);
+  //mesh.SendMessage(Msg);
 
   // client.publish("gimpire/EspPool/FilterPumpModeAutomatic", String(FilterpumpAutomaticOn).c_str());
 }
 void SetAutomaticStartActive(bool Mode)
 {
-  Serial.println("Set AutomaticStartActive to: " + String(Mode));
+  //Serial.println("Set AutomaticStartActive to: " + String(Mode));
   AutomaticStartActive = Mode;
 
-  String Msg = "MQTT AutomaticStartActive " + String(AutomaticStartActive);
-  mesh.SendMessage(Msg);
+  UpdateMqtt();
+
+  //String Msg = "MQTT AutomaticStartActive " + String(AutomaticStartActive);
+  //mesh.SendMessage(Msg);
 
   // client.publish("gimpire/EspPool/AutomaticStartActive", String(AutomaticStartActive).c_str());
 }
@@ -661,10 +729,9 @@ void SetAutomaticStartTime(int time)
   Serial.println("Set AutomaticStartTime to: " + String(time));
   AutomaticStartTime = time;
 
-  String Msg = "MQTT AutomaticStartTime " + String(AutomaticStartTime);
+  UpdateMqtt();
+  String Msg = "MQTT AutomaticStartTimeback " + String(AutomaticStartTime);
   mesh.SendMessage(Msg);
-
-  // client.publish("gimpire/EspPool/AutomaticStartTime", String(AutomaticStartTime).c_str());
 }
 void SetSaltSystemModeAutomatic(int ModeOn)
 {
@@ -677,8 +744,9 @@ void SetSaltSystemModeAutomatic(int ModeOn)
 
   if (ModeOn)
   {
-    String Msg = "MQTT SaltSystemModeAutomatic " + String(SaltSystemAutomaticOn);
-    mesh.SendMessage(Msg);
+    UpdateMqtt();
+    //String Msg = "MQTT SaltSystemModeAutomatic " + String(SaltSystemAutomaticOn);
+    //mesh.SendMessage(Msg);
 
     // client.publish("gimpire/EspPool/SaltSystemModeAutomatic", String(SaltSystemAutomaticOn).c_str());
 
@@ -721,29 +789,27 @@ void SaltSystemPowerOff()
   SaltSystemResetViaPowerCycleCounter++;
 
   SaltSystemAutomaticOn = false;
+  UpdateMqtt();
   // client.publish("gimpire/EspPool/SaltSystemModeAutomatic", String(SaltSystemAutomaticOn).c_str());
-  String Msg = "MQTT SaltSystemModeAutomatic " + String(SaltSystemAutomaticOn);
-  mesh.SendMessage(Msg);
+  //String Msg = "MQTT SaltSystemModeAutomatic " + String(SaltSystemAutomaticOn);
+  //mesh.SendMessage(Msg);
 }
 void SetSaltSystemAutomaticOnTime(uint8_t Time)
 {
   SaltSystemAutomaticOnTime = Time;
-
-  String Msg = "MQTT SaltSystemAutomaticOnTime " + String(SaltSystemAutomaticOnTime);
+  UpdateMqtt();
+  String Msg = "MQTT SetSetSaltSystemAutomaticOnTime " + String(SaltSystemAutomaticOnTime);
   mesh.SendMessage(Msg);
-
-  // client.publish("gimpire/EspPool/SaltSystemAutomaticOnTime", String(SaltSystemAutomaticOnTime).c_str());
-
-  Serial.println("SaltSystemAutomaticOnTime: " + String(SaltSystemAutomaticOnTime));
 }
 void SetFilterpumpAutomaticOnTime(uint8_t Time)
 {
   FilterpumpAutomaticOnTime = Time;
+  UpdateMqtt();
   // client.publish("gimpire/EspPool/FilterpumpAutomaticOnTime", String(FilterpumpAutomaticOnTime).c_str());
-  String Msg = "MQTT FilterpumpAutomaticOnTime " + String(FilterpumpAutomaticOnTime);
-  mesh.SendMessage(Msg);
+  //String Msg = "MQTT FilterpumpAutomaticOnTime " + String(FilterpumpAutomaticOnTime);
+  //mesh.SendMessage(Msg);
 
-  Serial.println("FilterpumpAutomaticOnTime: " + String(FilterpumpAutomaticOnTime));
+  //Serial.println("FilterpumpAutomaticOnTime: " + String(FilterpumpAutomaticOnTime));
 }
 void SetValvePosition(int ValveToHeat)
 {
@@ -764,8 +830,9 @@ void SetValvePosition(int ValveToHeat)
   delay(100);
   SetOutput(ValvePowerOutput, 1);
   tasker.setTimeout(ValvePowerOff, ValvePowerOffDelay);
-  String Msg = "MQTT ValveToHeat " + String(ValvePositionHeat);
-  mesh.SendMessage(Msg);
+  UpdateMqtt();
+  //String Msg = "MQTT ValveToHeat " + String(ValvePositionHeat);
+  //mesh.SendMessage(Msg);
   // client.publish("gimpire/EspPool/ValveToHeat", String(ValvePositionHeat).c_str());
 }
 void ValvePowerOff()
@@ -773,60 +840,4 @@ void ValvePowerOff()
   SetOutput(ValvePowerOutput, 0);
   delay(200);
   SetOutput(ValveOutput, 0);
-}
-void onMessageReceived(const String &topic, const String &message)
-{
-
-  String TopicString = String(topic);
-  String Command = getValue(TopicString, '/', 3);
-
-  if (Command == "output")
-  {
-    String OutputString = getValue(TopicString, '/', 4);
-    uint8_t OutputNumber = OutputString.toInt();
-
-    SetOutput(OutputNumber, message.toInt());
-  }
-  else if (Command == "FilterPumpModeAutomatic")
-  {
-    SetFilterPumpModeAutomatic(message.toInt());
-  }
-  else if (Command == "FilterpumpAutomaticOnTime")
-  {
-    SetFilterpumpAutomaticOnTime(message.toInt());
-  }
-  else if (Command == "SaltSystemModeAutomatic")
-  {
-    SetSaltSystemModeAutomatic(message.toInt());
-  }
-  else if (Command == "SaltSystemAutomaticOnTime")
-  {
-    SetSaltSystemAutomaticOnTime(message.toInt());
-  }
-  else if (Command == "AutomaticStartActive")
-  {
-    SetAutomaticStartActive(message.toInt());
-  }
-  else if (Command == "AutomaticStartTime")
-  {
-    SetAutomaticStartTime(message.toInt());
-  }
-  else if (Command == "ValveToHeat")
-  {
-    SetValvePosition(message.toInt());
-  }
-  else if (Command == "WaterMaxTemperature")
-  {
-    WaterMAxTemperature = message.toInt();
-    String Msg = "MQTT WaterMaxTemperature " + String(WaterMAxTemperature);
-    mesh.SendMessage(Msg);
-    // client.publish("gimpire/EspPool/WaterMaxTemperature", String(WaterMAxTemperature).c_str());
-  }
-  else if (Command == "ValveAutomaticMode")
-  {
-    ValveAutomaticMode = message.toInt();
-    String Msg = "MQTT ValveAutomaticMode " + String(ValveAutomaticMode);
-    mesh.SendMessage(Msg);
-    // client.publish("gimpire/EspPool/ValveAutomaticMode", String(ValveAutomaticMode).c_str());
-  }
 }
