@@ -11,7 +11,7 @@
 #include "SH1106Wire.h"
 #include "EasyPCF8574.h"
 
-#define FWVERSION "1.37"
+#define FWVERSION "1.38"
 #define MODULNAME "GBusPool"
 #define LogLevel ESP_LOG_NONE
 
@@ -54,7 +54,7 @@ DeviceAddress VorlaufThermometer = {0x28, 0x52, 0x04, 0xE8, 0x50, 0x20, 0x01, 0x
 DeviceAddress RucklaufThermometer = {0x28, 0x47, 0x53, 0xF2, 0x50, 0x20, 0x01, 0xA7};
 DeviceAddress GarageRoofThermometer = {0x28, 0x3A, 0x0D, 0xD6, 0x50, 0x20, 0x01, 0x3C};
 float WaterThermometerValue, VorlaufThermometerValue, RucklaufThermometerValue, GarageRoofThermometerValue;
-const long durationTemp = 1 * 60 * 1000; // The frequency of temperature measurement
+const long durationTemp = 2 * 60 * 1000; // The frequency of temperature measurement
 bool NewTemperatures = false;
 
 bool FilterpumpAutomaticOn;
@@ -151,9 +151,6 @@ void setup()
     buttons[i].interval(40);                           // interval in ms
   }
 
-  // Beginn with temperature task
-  TempSensorStartConversion();
-
   SetFilterpumpAutomaticOnTime(6);
   SetFilterPumpModeAutomatic(false);
 
@@ -166,6 +163,10 @@ void setup()
   HandleDisplaypower(1);
 
   tasker.setTimeout(RootNotActiveWatchdog, CheckForRootNodeIntervall);
+
+  // Beginn with temperature task
+  //TempSensorStartConversion();
+  tasker.setInterval(TempSensorStartConversion,durationTemp);
 }
 
 void loop()
@@ -486,8 +487,8 @@ void TempSensorStartConversion()
   // start temperature conversion (does not block)
   sensors.requestTemperatures();
   // schedule reading the actual temperature in 750 milliseconds
-  tasker.setTimeout(readSensor, 750);
-  tasker.setTimeout(TempSensorStartConversion, durationTemp);
+  tasker.setTimeout(readSensor, 1000);
+  
 }
 void UpdateMqtt()
 {
