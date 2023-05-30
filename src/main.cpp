@@ -140,6 +140,7 @@ void setup()
   Display.drawString(4, 0, "Init output");
   Display.display();
 
+  
   for (int x = 1; x <= 8; x++)
   {
     SetOutput(x, 0);
