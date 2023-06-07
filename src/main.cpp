@@ -11,7 +11,7 @@
 #include "SH1106Wire.h"
 #include "EasyPCF8574.h"
 
-#define FWVERSION "1.38"
+#define FWVERSION "1.40"
 #define MODULNAME "GBusPool"
 #define LogLevel ESP_LOG_NONE
 
@@ -311,7 +311,9 @@ void loop()
 
 void RootNotActiveWatchdog()
 {
-  ESP.restart();
+  String MsgBack = "MQTT Reboot WatchdogReboot";
+  mesh.SendMessage(MsgBack);
+  //ESP.restart();
 }
 
 void SentNodeInfo()
@@ -351,24 +353,6 @@ void meshMessage(String msg, uint8_t SrcMac[6])
   else if (Type == "Config")
   {
     Serial.printf("Config\n");
-    String ConfigType = getValue(msg, ' ', 1);
-    // Config ModulType 2|4|6
-    if (ConfigType == "ModulType")
-    {
-      String Type = getValue(msg, ' ', 2);
-      Serial.printf("New ModulType: %s\n", Type.c_str());
-      EEPROM.write(0, (uint8_t)Type.toInt());
-      EEPROM.commit();
-      ESP.restart();
-    }
-    else if (ConfigType == "WifiPower")
-    {
-      String Type = getValue(msg, ' ', 2);
-      Serial.printf("WifiPower: %s\n", Type.c_str());
-      EEPROM.write(2, (uint8_t)Type.toInt());
-      EEPROM.commit();
-      ESP.restart();
-    }
   }
   else if (Type == "GetNodeInfo")
   {
@@ -376,7 +360,7 @@ void meshMessage(String msg, uint8_t SrcMac[6])
   }
   else if (Type == "Reboot")
   {
-    String MsgBack = "MQTT Reboot Reboot";
+    String MsgBack = "MQTT Reboot ConfigReboot";
     mesh.SendMessage(MsgBack);
     ESP.restart();
   }
