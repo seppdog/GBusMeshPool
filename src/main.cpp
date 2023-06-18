@@ -11,7 +11,7 @@
 #include "SH1106Wire.h"
 #include "EasyPCF8574.h"
 
-#define FWVERSION "1.40"
+#define FWVERSION "1.43"
 #define MODULNAME "GBusPool"
 #define LogLevel ESP_LOG_NONE
 
@@ -71,7 +71,12 @@ uint8_t ActualDisplayPage = 1;
 
 uint32_t Minute = 0;
 uint32_t Hour = 0;
-MeshApp mesh;
+MeshApp GBusMesh;
+
+bool NewMeshMessage = false;
+String LastMeshMessage;
+uint8_t LastSrcMac[6];
+void LastmeshMessage(String msg, uint8_t SrcMac[6]);
 
 // Prototypes
 void meshMessage(String msg, uint8_t SrcMac[6]);
@@ -120,9 +125,9 @@ void setup()
   Display.drawString(4, 0, "Connecting to GBusMesh"); //, OLED::DOUBLE_SIZE);
   Display.display();
 
-  mesh.onMessage(meshMessage);
-  mesh.onConnected(meshConnected);
-  mesh.start(false);
+  GBusMesh.onMessage(meshMessage);
+  GBusMesh.onConnected(meshConnected);
+  GBusMesh.start(false);
 
   Display.clear();
   Display.drawString(4, 0, "Connected to Wifi"); //, OLED::DOUBLE_SIZE);
@@ -173,6 +178,7 @@ void setup()
 void loop()
 {
   tasker.loop();
+  GBusMesh.Task();
 
   for (int i = 0; i < NUM_BUTTONS; i++)
   {
@@ -307,12 +313,19 @@ void loop()
     UpdateMqtt();
     UpdateDisplay();
   }
+
+  if (NewMeshMessage)
+  {
+    NewMeshMessage = false;
+    LastmeshMessage(LastMeshMessage, LastSrcMac);
+  }
+
 }
 
 void RootNotActiveWatchdog()
 {
   String MsgBack = "MQTT Reboot WatchdogReboot";
-  mesh.SendMessage(MsgBack);
+  GBusMesh.SendMessage(MsgBack);
   //ESP.restart();
 }
 
@@ -324,7 +337,7 @@ void SentNodeInfo()
   char MsgBuffer[300];
   sprintf(MsgBuffer, "MQTT Info ModulName:%s,SubType:%u,MAC:%s,WifiStrength:%d,Parent:%s,FW:%s", MODULNAME, ModulType, WiFi.macAddress().c_str(), getWifiStrength(3), hextab_to_string(bssid.addr).c_str(), FWVERSION);
   String Msg = String(MsgBuffer);
-  mesh.SendMessage(Msg);
+  GBusMesh.SendMessage(Msg);
 }
 
 void meshConnected()
@@ -334,6 +347,13 @@ void meshConnected()
 
 void meshMessage(String msg, uint8_t SrcMac[6])
 {
+  LastMeshMessage = msg;
+  memcpy(LastSrcMac, SrcMac, sizeof(LastSrcMac));
+  NewMeshMessage = true;
+}
+
+void LastmeshMessage(String msg, uint8_t SrcMac[6])
+{
   MDF_LOGD("Rec msg %u: %s", msg.length(), msg.c_str());
 
   String Type = getValue(msg, ' ', 0);
@@ -341,7 +361,7 @@ void meshMessage(String msg, uint8_t SrcMac[6])
   String Command = getValue(msg, ' ', 2);
   uint8_t NumberInt = Number.toInt();
 
-  //String MsgBack = "MQTT Get" + Type + " " + Number + " " + Command + " " + String(WaterMAxTemperature);
+  //String MsgBack = "MQTT Get " + Type + " " + Number + " " + Command;
   //mesh.SendMessage(MsgBack);
 
   if (msg.startsWith("I'm Root!"))
@@ -360,8 +380,7 @@ void meshMessage(String msg, uint8_t SrcMac[6])
   }
   else if (Type == "Reboot")
   {
-    String MsgBack = "MQTT Reboot ConfigReboot";
-    mesh.SendMessage(MsgBack);
+    delay(2000);
     ESP.restart();
   }
   else if (Type == "time")
@@ -369,8 +388,8 @@ void meshMessage(String msg, uint8_t SrcMac[6])
     String ActualTime = getValue(msg, ' ', 1);
     sscanf(ActualTime.c_str(), "%u:%u", &Hour, &Minute);
 
-    String MsgBack = "MQTT time Time=" + String(Hour) + ":" + String(Minute) + "," + String(AutomaticStartTime) + "," + String(AutomaticStartActive) + "," + String(FilterpumpAutomaticOn);
-    mesh.SendMessage(MsgBack);
+    //String MsgBack = "MQTT time Time=" + String(Hour) + ":" + String(Minute) + "," + String(AutomaticStartTime) + "," + String(AutomaticStartActive) + "," + String(FilterpumpAutomaticOn);
+    //mesh.SendMessage(MsgBack);
 
     if (Hour == AutomaticStartTime &&
         Minute == 0 &&
@@ -500,7 +519,7 @@ void UpdateMqtt()
   String PoolJsonString;
   serializeJson(PoolJson, PoolJsonString);
   String Msg = "MQTT values " + PoolJsonString;
-  mesh.SendMessage(Msg);
+  GBusMesh.SendMessage(Msg);
 }
 void UpdateDisplay()
 {
@@ -668,7 +687,7 @@ void SetOutput(uint8_t Output, bool Value)
   // String PublishString = "gimpire/EspPool/output/" + String(Output);
 
   String Msg = "MQTT output/" + String(Output) + " " + String(Value).c_str();
-  mesh.SendMessage(Msg);
+  GBusMesh.SendMessage(Msg);
 
   // client.publish(PublishString.c_str(), String(Value).c_str());
 }
@@ -716,8 +735,8 @@ void SetAutomaticStartTime(int time)
   AutomaticStartTime = time;
 
   UpdateMqtt();
-  String Msg = "MQTT AutomaticStartTimeback " + String(AutomaticStartTime);
-  mesh.SendMessage(Msg);
+  //String Msg = "MQTT AutomaticStartTimeback " + String(AutomaticStartTime);
+  //mesh.SendMessage(Msg);
 }
 void SetSaltSystemModeAutomatic(int ModeOn)
 {
@@ -785,7 +804,7 @@ void SetSaltSystemAutomaticOnTime(uint8_t Time)
   SaltSystemAutomaticOnTime = Time;
   UpdateMqtt();
   String Msg = "MQTT SetSetSaltSystemAutomaticOnTime " + String(SaltSystemAutomaticOnTime);
-  mesh.SendMessage(Msg);
+  GBusMesh.SendMessage(Msg);
 }
 void SetFilterpumpAutomaticOnTime(uint8_t Time)
 {
